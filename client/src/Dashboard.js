@@ -1,9 +1,9 @@
 import React from "react";
 import {useAuth} from "./AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate,Link } from "react-router-dom";
 
 function DashboardPage(){
-    const {setAuthToken}=useAuth();
+    const {setAuthToken,user}=useAuth();
     const navigate=useNavigate();
 
     const handleLogout=()=>{
@@ -11,12 +11,38 @@ function DashboardPage(){
         navigate("/login");
     };
 
+    if (!user) {
+        return <div>Loading...</div>; 
+    }
+
     return(
-        <div>
-            <h2>Welcome to your Dashboard</h2>
-            <p>You can only see this if you are logged in.</p>
+         <div>
+            {/* This part is for everyone */}
+            <h2>Welcome to your Dashboard, {user.email}!</h2>
             <button onClick={handleLogout}>Logout</button>
-        </div>
+            <hr />
+
+            {/* --- Admin-Only View --- */}
+            {user.role === 'admin' && (
+              <div>
+                <h3>Admin Panel</h3>
+                <Link to="/admin/requests">View Pending Requests</Link>
+                <br />
+                {/* Add more admin links here later */}
+                {/* <Link to="/admin/vehicles">Manage Vehicles</Link> */}
+              </div>
+            )}
+
+            {/* --- Organization-Only View --- */}
+            {user.role === 'organisation' && (
+              <div>
+                <h3>Organization Portal</h3>
+                <Link to="/new-request">Create a New Waste Request</Link>
+                <br />
+                {/* <Link to="/my-requests">View My Request History</Link> */}
+              </div>
+            )}
+         </div>
     );
 }
 

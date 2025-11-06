@@ -9,6 +9,33 @@ const app = express();
 const PORT = 5000;
 app.use(cors());
 app.use(express.json());
+console.log("hi");
+const password_=process.env.MYSQL_PASSWORD;
+console.log(password_);
+
+const authenticateToken = (req, res, next) => {
+  const authHeader=req.headers['authorization'];
+  const token=authHeader&&authHeader.split(' ')[1];
+
+  if (token == null) {
+    return res.status(401).json({ message: 'No token provided' }); 
+  }
+
+  jwt.verify(token,'YOUR_TEMPORARY_SECRET_KEY',(err,user)=>{
+    if(err){
+      return res.status(403).json({ message: 'Token is invalid' });
+    }
+    req.user=user;
+    next();
+  })
+}
+
+const isAdmin=(req,res,next)=>{
+  if(req.user.role!=='admin'){
+    return res.status(403).json({ message: 'Access forbidden: Admins only' });
+  }
+  next();
+}
 
 const pool=mysql.createPool({
   host:'localhost',
@@ -17,9 +44,21 @@ const pool=mysql.createPool({
   database:'waste_management'
 });
 
-app.get('/api/test', (req, res) => {
-  res.json({ message: "Hello from your Express server!" });
-});
+// app.get('/api/test', (req, res) => {
+//   res.json({ message: "Hello from your Express server!" });
+// });
+
+app.get('/api/admin/requests',authenticateToken,isAdmin,async(req,res)=>{
+  try{
+    const sql = `SELECT r.request_id, r.pickup_date, r.waste_type, r.status, o.name AS organisation_name FROM requests r JOIN organisation o ON r.org_id = o.id WHERE r.status = 'Pending' ORDER BY r.pickup_date ASC`;
+    const [requests] = await pool.query(sql);
+    res.json(requests);
+  }catch (err) {
+    console.error("Admin Get Requests Error:", err.message);
+    res.status(500).send('Server Error');
+  } 
+
+})
 
 app.post('/api/auth/register-org',async(req,res)=>{
   const {name,address,contact_email,contact_phone,password} =req.body;
@@ -100,6 +139,24 @@ app.post('/api/auth/login',async(req,res)=>{
     res.status(500).send('Server Error');
   }
 });
+
+app.post('/api/requests',authenticateToken,async(req,res)=>{
+  const {category,weight_kg,notes,pickup_date}=req.body;
+  const loggedInUserId=req.user.userId;
+  const userRole=req.user.role;
+  // console.log(userRole);
+  if(userRole!='organisation'){
+    return res.status(403).json({ message: 'Only organizations can create requests' });
+  }
+  try{
+    const sql =`INSERT INTO requests(org_id,waste_type,estimated_weight_kg,special_instructions,pickup_date,status) VALUES(?,?,?,?,?,'Pending')`;
+    await pool.query(sql, [loggedInUserId, category, weight_kg, notes,pickup_date]);
+    res.status(201).json({ message: 'Request submitted successfully!' });
+  }catch(err){
+    console.error("Request Error:", err.message);
+    res.status(500).send('Server Error');
+  }
+})
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);

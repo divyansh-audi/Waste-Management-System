@@ -6,7 +6,8 @@ import EmployeeRegisterPage from './EmployeeRegisterPage';
 import DashboardPage from "./Dashboard";
 import { AuthProvider } from "./AuthContext";
 import ProtectedRoute from './ProtectedRoute';
-
+import NewRequestPage from "./NewRequestPage";
+import AdminRequestsPage from './AdminRequestsPage';
 
 function App() {
    return (
@@ -28,6 +29,8 @@ function App() {
 
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />}/>
+            <Route path="/new-request" element={<NewRequestPage />}/>
+            <Route path="/admin/requests" element={<AdminRequestsPage />} />
           </Route>
         </Routes>
 
