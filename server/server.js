@@ -48,9 +48,29 @@ const pool=mysql.createPool({
 //   res.json({ message: "Hello from your Express server!" });
 // });
 
+app.get('/api/admin/employees', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const [employees] = await pool.query('SELECT employee_id, name FROM employees');
+    res.json(employees);
+  } catch (err) {
+    res.status(500).send('Server Error');
+  }
+});
+
+app.get('/api/admin/vehicles', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const [vehicles] = await pool.query('SELECT reg_no, vehicle_type FROM vehicles');
+    res.json(vehicles);
+  } catch (err) {
+    res.status(500).send('Server Error');
+  }
+});
+
 app.get('/api/admin/requests',authenticateToken,isAdmin,async(req,res)=>{
   try{
-    const sql = `SELECT r.request_id, r.pickup_date, r.waste_type, r.status, o.name AS organisation_name FROM requests r JOIN organisation o ON r.org_id = o.id WHERE r.status = 'Pending' ORDER BY r.pickup_date ASC`;
+
+    // const sql = `SELECT r.request_id, r.pickup_date, r.waste_type, r.status, o.name AS organisation_name FROM requests r JOIN organisation o ON r.org_id = o.id WHERE r.status = 'Pending' ORDER BY r.pickup_date ASC`;
+    const sql = `SELECT r.request_id, r.pickup_date, wc.category AS waste_type,r.status, o.name AS organisation_name FROM requests r JOIN organisation o ON r.org_id = o.id JOIN waste_categories wc ON r.category_id = wc.category_id WHERE r.status = 'Pending' ORDER BY r.pickup_date ASC`;
     const [requests] = await pool.query(sql);
     res.json(requests);
   }catch (err) {
@@ -59,6 +79,61 @@ app.get('/api/admin/requests',authenticateToken,isAdmin,async(req,res)=>{
   } 
 
 })
+
+app.get('/api/waste-categories', authenticateToken, async (req, res) => {
+  try {
+    const [categories] = await pool.query('SELECT category_id, category FROM waste_categories');
+    res.json(categories);
+  } catch (err) {
+    console.error("Get Categories Error:", err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+app.post('/api/admin/schedule', authenticateToken, isAdmin, async (req, res) => {
+  const { request_id, employee_id, vehicle_reg, pickup_datetime } = req.body;
+  
+  const connection = await pool.getConnection(); // Get connection for transaction
+  
+  try {
+    // Start transaction
+    await connection.beginTransaction();
+
+    // 1. Update the 'requests' table status
+    await connection.query(
+      "UPDATE requests SET status = 'Scheduled' WHERE request_id = ?",
+      [request_id]
+    );
+
+    // 2. Get the org_id from the original request
+    const [rows] = await connection.query(
+      "SELECT org_id FROM requests WHERE request_id = ?", 
+      [request_id]
+    );
+    const org_id = rows[0].org_id;
+    const collection_sql = `
+      INSERT INTO collections (request_id, org_id, pickup_datetime, employee_id, vehicle_reg, status)
+      VALUES (?, ?, ?, ?, ?, 'Scheduled')
+    `;
+    await connection.query(collection_sql, [
+      request_id,
+      org_id,
+      pickup_datetime,
+      employee_id,
+      vehicle_reg
+    ]);
+
+    await connection.commit();
+    res.status(201).json({ message: 'Request scheduled successfully!' });
+
+  } catch (err) {
+    await connection.rollback();
+    console.error("Schedule Error:", err);
+    res.status(500).json({ message: 'Failed to schedule request.' });
+  } finally {
+    connection.release();
+  }
+});
 
 app.post('/api/auth/register-org',async(req,res)=>{
   const {name,address,contact_email,contact_phone,password} =req.body;
@@ -141,7 +216,7 @@ app.post('/api/auth/login',async(req,res)=>{
 });
 
 app.post('/api/requests',authenticateToken,async(req,res)=>{
-  const {category,weight_kg,notes,pickup_date}=req.body;
+  const { category_id, weight_kg, notes, pickup_date } = req.body;
   const loggedInUserId=req.user.userId;
   const userRole=req.user.role;
   // console.log(userRole);
@@ -149,8 +224,8 @@ app.post('/api/requests',authenticateToken,async(req,res)=>{
     return res.status(403).json({ message: 'Only organizations can create requests' });
   }
   try{
-    const sql =`INSERT INTO requests(org_id,waste_type,estimated_weight_kg,special_instructions,pickup_date,status) VALUES(?,?,?,?,?,'Pending')`;
-    await pool.query(sql, [loggedInUserId, category, weight_kg, notes,pickup_date]);
+    const sql =`INSERT INTO requests(org_id,category_id,estimated_weight_kg,special_instructions,pickup_date,status) VALUES(?,?,?,?,?,'Pending')`;
+    await pool.query(sql, [loggedInUserId, category_id, weight_kg, notes,pickup_date]);
     res.status(201).json({ message: 'Request submitted successfully!' });
   }catch(err){
     console.error("Request Error:", err.message);
