@@ -12,6 +12,7 @@ app.use(express.json());
 console.log("hi");
 const password_=process.env.MYSQL_PASSWORD;
 console.log(password_);
+const PRICE_PER_KG = 0.5;
 
 const authenticateToken = (req, res, next) => {
   const authHeader=req.headers['authorization'];
@@ -37,6 +38,14 @@ const isAdmin=(req,res,next)=>{
   next();
 }
 
+const isDriver = (req, res, next) => {
+  // This runs *after* authenticateToken, so req.user exists
+  if (req.user.role !== 'driver') {
+    return res.status(403).json({ message: 'Access forbidden: Drivers only' });
+  }
+  next();
+};
+
 const pool=mysql.createPool({
   host:'localhost',
   user:'root',
@@ -48,9 +57,64 @@ const pool=mysql.createPool({
 //   res.json({ message: "Hello from your Express server!" });
 // });
 
+app.get('/api/admin/scheduled-collections', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    // This query joins all the tables to get the names
+    const sql = `
+      SELECT 
+        c.collection_id,
+        c.pickup_datetime,
+        o.name AS organisation_name,
+        e.name AS employee_name,
+        v.vehicle_type,
+        v.reg_no
+      FROM collections c
+      JOIN organisation o ON c.org_id = o.id
+      JOIN employees e ON c.employee_id = e.employee_id
+      JOIN vehicles v ON c.vehicle_reg = v.reg_no
+      WHERE c.status = 'Scheduled'
+      ORDER BY c.pickup_datetime ASC
+    `;
+    const [collections] = await pool.query(sql);
+    res.json(collections);
+  } catch (err) {
+    console.error("Get Scheduled Collections Error:", err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+app.get('/api/driver/my-jobs', authenticateToken, isDriver, async (req, res) => {
+  try {
+    const loggedInDriverId = req.user.userId;
+
+    // This query gets all scheduled jobs for this specific driver
+    const sql = `
+      SELECT 
+        c.collection_id,
+        c.pickup_datetime,
+        o.name AS organisation_name,
+        o.address AS organisation_address,
+        v.vehicle_type,
+        v.reg_no
+      FROM collections c
+      JOIN organisation o ON c.org_id = o.id
+      JOIN vehicles v ON c.vehicle_reg = v.reg_no
+      WHERE c.status = 'Scheduled' AND c.employee_id = ?
+      ORDER BY c.pickup_datetime ASC
+    `;
+    
+    const [jobs] = await pool.query(sql, [loggedInDriverId]);
+    res.json(jobs);
+
+  } catch (err) {
+    console.error("Driver Get Jobs Error:", err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
 app.get('/api/admin/employees', authenticateToken, isAdmin, async (req, res) => {
   try {
-    const [employees] = await pool.query('SELECT employee_id, name FROM employees');
+    const [employees] = await pool.query('SELECT employee_id, name,email,contact FROM employees');
     res.json(employees);
   } catch (err) {
     res.status(500).send('Server Error');
@@ -59,9 +123,10 @@ app.get('/api/admin/employees', authenticateToken, isAdmin, async (req, res) => 
 
 app.get('/api/admin/vehicles', authenticateToken, isAdmin, async (req, res) => {
   try {
-    const [vehicles] = await pool.query('SELECT reg_no, vehicle_type FROM vehicles');
+    const [vehicles] = await pool.query('SELECT reg_no, vehicle_type ,capacity_kg FROM vehicles');
     res.json(vehicles);
   } catch (err) {
+    console.error("Get Vehicles Error:", err.message);
     res.status(500).send('Server Error');
   }
 });
@@ -90,22 +155,36 @@ app.get('/api/waste-categories', authenticateToken, async (req, res) => {
   }
 });
 
+app.get('/api/my-payments', authenticateToken, async (req, res) => {
+  // Only orgs can see their payments
+  if (req.user.role !== 'organisation') {
+    return res.status(403).json({ message: 'Access forbidden.' });
+  }
+  
+  try {
+    const [payments] = await pool.query(
+      "SELECT * FROM payments WHERE org_id = ? ORDER BY payment_date DESC",
+      [req.user.userId] // Get ID from the token
+    );
+    res.json(payments);
+  } catch (err) {
+    console.error("Get My Payments Error:", err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
 app.post('/api/admin/schedule', authenticateToken, isAdmin, async (req, res) => {
   const { request_id, employee_id, vehicle_reg, pickup_datetime } = req.body;
   
-  const connection = await pool.getConnection(); // Get connection for transaction
+  const connection = await pool.getConnection();
   
   try {
-    // Start transaction
     await connection.beginTransaction();
 
-    // 1. Update the 'requests' table status
     await connection.query(
       "UPDATE requests SET status = 'Scheduled' WHERE request_id = ?",
       [request_id]
     );
-
-    // 2. Get the org_id from the original request
     const [rows] = await connection.query(
       "SELECT org_id FROM requests WHERE request_id = ?", 
       [request_id]
@@ -130,6 +209,242 @@ app.post('/api/admin/schedule', authenticateToken, isAdmin, async (req, res) => 
     await connection.rollback();
     console.error("Schedule Error:", err);
     res.status(500).json({ message: 'Failed to schedule request.' });
+  } finally {
+    connection.release();
+  }
+});
+
+app.post('/api/driver/complete-job', authenticateToken, isDriver, async (req, res) => {
+  const { collection_id, weight_kg } = req.body;
+  const loggedInDriverId = req.user.userId;
+
+  if (!weight_kg || !collection_id) {
+    return res.status(400).json({ message: "Collection ID and weight are required." });
+  }
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // 1. Update 'collections'
+    // !! CRITICAL SECURITY CHECK !!
+    // We add "AND employee_id = ?" to the query.
+    // This makes it IMPOSSIBLE for a driver to complete another driver's job.
+    const updateResult = await connection.query(
+      "UPDATE collections SET status = 'Completed', weight_kg = ? WHERE collection_id = ? AND employee_id = ?",
+      [weight_kg, collection_id, loggedInDriverId]
+    );
+    
+    // Check if the update actually changed a row.
+    // If affectedRows is 0, it means the job wasn't theirs.
+    if (updateResult[0].affectedRows === 0) {
+      throw new Error("Job not found or not assigned to this driver.");
+    }
+
+    // 2. Get request_id
+    const [rows] = await connection.query(
+      "SELECT request_id, org_id FROM collections WHERE collection_id = ?", 
+      [collection_id]
+    );
+    const { request_id, org_id } = rows[0];
+
+    // 3. Update 'requests'
+    await connection.query(
+      "UPDATE requests SET status = 'Completed' WHERE request_id = ?",
+      [request_id]
+    );
+
+    // 4. Create the bill
+    const PRICE_PER_KG = 0.5; // Make sure this is consistent
+    const calculatedAmount = weight_kg * PRICE_PER_KG;
+    const payment_sql = `
+      INSERT INTO payments (org_id, amount, payment_date, payment_method, status)
+      VALUES (?, ?, CURDATE(), 'Unpaid', 'Pending')
+    `;
+    await connection.query(payment_sql, [org_id, calculatedAmount]);
+
+    // 5. COMMIT
+    await connection.commit();
+    res.status(200).json({ message: 'Collection marked as complete!' });
+
+  } catch (err) {
+    await connection.rollback();
+    console.error("Driver Complete Job Error:", err);
+    res.status(500).json({ message: err.message || 'Failed to complete collection.' });
+  } finally {
+    connection.release();
+  }
+});
+
+app.post('/api/pay-bill/:payment_id', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'organisation') {
+    return res.status(403).json({ message: 'Access forbidden.' });
+  }
+  
+  try {
+    const { payment_id } = req.params;
+    
+    // This is a simple simulation. We just update the status.
+    await pool.query(
+      "UPDATE payments SET status = 'Paid', payment_method = 'Online' WHERE payment_id = ? AND org_id = ?",
+      [payment_id, req.user.userId] // Check org_id to make sure they can only pay their own bills
+    );
+    res.status(200).json({ message: 'Payment successful!' });
+  } catch (err) {
+    console.error("Pay Bill Error:", err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+app.post('/api/admin/vehicles', authenticateToken, isAdmin, async (req, res) => {
+  // 1. Get new vehicle data from the admin's form
+  const { reg_no, vehicle_type, capacity_kg } = req.body;
+
+  if (!reg_no || !vehicle_type || !capacity_kg) {
+    return res.status(400).json({ message: 'All fields are required.' });
+  }
+
+  try {
+    // 2. Insert into the 'vehicles' table
+    const sql = `
+      INSERT INTO vehicles (reg_no, vehicle_type, capacity_kg)
+      VALUES (?, ?, ?)
+    `;
+    await pool.query(sql, [reg_no, vehicle_type, capacity_kg]);
+
+    res.status(201).json({ message: 'Vehicle added successfully!' });
+
+  } catch (err) {
+    // 3. Handle duplicate reg_no
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ message: 'This registration number already exists.' });
+    }
+    console.error("Add Vehicle Error:", err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+app.post('/api/admin/employees', authenticateToken, isAdmin, async (req, res) => {
+  // 1. Get new employee data from the admin's form
+  const { name, email, contact, age, password,role } = req.body;
+
+  if (!name || !email || !password) {
+    return res.status(400).json({ message: 'Name, email, and password are required.' });
+  }
+
+  try {
+    // 2. Hash the password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // 3. Insert into the 'employees' table
+    const sql = `
+      INSERT INTO employees (name, email, contact, age, password, role)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `;
+    await pool.query(sql, [name, email, contact, age, hashedPassword,role]);
+
+    res.status(201).json({ message: 'Employee added successfully!' });
+
+  } catch (err) {
+    // 4. Handle duplicate email
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ message: 'This email is already registered.' });
+    }
+    console.error("Add Employee Error:", err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+app.post('/api/admin/complete-collection', authenticateToken, isAdmin, async (req, res) => {
+  const { collection_id, weight_kg } = req.body;
+  
+  if (!weight_kg || !collection_id) {
+    return res.status(400).json({ message: "Collection ID and weight are required." });
+  }
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // 1. Update 'collections' (as before)
+    await connection.query(
+      "UPDATE collections SET status = 'Completed', weight_kg = ? WHERE collection_id = ?",
+      [weight_kg, collection_id]
+    );
+
+    // 2. Get request_id and org_id
+    const [rows] = await connection.query(
+      "SELECT request_id, org_id FROM collections WHERE collection_id = ?", 
+      [collection_id]
+    );
+    const { request_id, org_id } = rows[0];
+
+    // 3. Update 'requests' (as before)
+    await connection.query(
+      "UPDATE requests SET status = 'Completed' WHERE request_id = ?",
+      [request_id]
+    );
+
+    // 4. --- NEW STEP: Create the Bill ---
+    const calculatedAmount = weight_kg * PRICE_PER_KG;
+    const payment_sql = `
+      INSERT INTO payments (org_id, amount, payment_date, payment_method, status)
+      VALUES (?, ?, CURDATE(), 'Unpaid', 'Pending')
+    `;
+    // CURDATE() gets today's date
+    await connection.query(payment_sql, [org_id, calculatedAmount]);
+
+    // 5. COMMIT the transaction
+    await connection.commit();
+    res.status(200).json({ message: 'Collection completed and bill generated!' });
+
+  } catch (err) {
+    // 6. ROLL BACK
+    await connection.rollback();
+    console.error("Complete Collection Error:", err);
+    res.status(500).json({ message: 'Failed to complete collection. Operation was rolled back.' });
+  } finally {
+    // 7. ALWAYS release
+    connection.release();
+  }
+});
+
+app.post('/api/admin/complete-collection', authenticateToken, isAdmin, async (req, res) => {
+  const { collection_id, weight_kg } = req.body;
+  
+  if (!weight_kg || !collection_id) {
+    return res.status(400).json({ message: "Collection ID and weight are required." });
+  }
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    await connection.query(
+      "UPDATE collections SET status = 'Completed', weight_kg = ? WHERE collection_id = ?",
+      [weight_kg, collection_id]
+    );
+
+    const [rows] = await connection.query(
+      "SELECT request_id FROM collections WHERE collection_id = ?", 
+      [collection_id]
+    );
+    const request_id = rows[0].request_id;
+
+    await connection.query(
+      "UPDATE requests SET status = 'Completed' WHERE request_id = ?",
+      [request_id]
+    );
+    await connection.commit();
+    res.status(200).json({ message: 'Collection marked as complete!' });
+
+  } catch (err) {
+    await connection.rollback();
+    console.error("Complete Collection Error:", err);
+    res.status(500).json({ message: 'Failed to complete collection. Operation was rolled back.' });
   } finally {
     connection.release();
   }
@@ -194,7 +509,7 @@ app.post('/api/auth/login',async(req,res)=>{
       if (!passwordMatch) {
         return res.status(400).json({ message: 'Invalid Password for admin' });
       }
-      const token=jwt.sign({ userId:employee.employee_id,email:employee.email,role:'admin'},'YOUR_TEMPORARY_SECRET_KEY',{ expiresIn: '1h' } );
+      const token=jwt.sign({ userId:employee.employee_id,email:employee.email,role:employee.role},'YOUR_TEMPORARY_SECRET_KEY',{ expiresIn: '1h' } );
       return res.json({ token });
     }
   

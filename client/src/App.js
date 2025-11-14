@@ -8,6 +8,11 @@ import { AuthProvider } from "./AuthContext";
 import ProtectedRoute from './ProtectedRoute';
 import NewRequestPage from "./NewRequestPage";
 import AdminRequestsPage from './AdminRequestsPage';
+import ScheduledCollectionsPage from './ScheduledCollectionsPage';
+import MyBillingPage from './MyBillingPage';
+import ManageVehiclesPage from './ManageVehiclesPage';
+import ManageEmployeesPage from './ManageEmployeesPage';
+import DriverDashboardPage from './DriverDashboardPage';
 
 function App() {
    return (
@@ -30,7 +35,12 @@ function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />}/>
             <Route path="/new-request" element={<NewRequestPage />}/>
+            <Route path="/my-billing" element={<MyBillingPage />} />
             <Route path="/admin/requests" element={<AdminRequestsPage />} />
+            <Route path="/admin/scheduled" element={<ScheduledCollectionsPage />} />
+            <Route path="/admin/vehicles" element={<ManageVehiclesPage />} />
+            <Route path="/admin/employees" element={<ManageEmployeesPage />} />
+            <Route path="/driver-dashboard" element={<DriverDashboardPage />} />
           </Route>
         </Routes>
 

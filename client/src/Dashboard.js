@@ -30,6 +30,9 @@ function DashboardPage(){
                 <br />
                 {/* Add more admin links here later */}
                 {/* <Link to="/admin/vehicles">Manage Vehicles</Link> */}
+                <Link to="/admin/scheduled">View Scheduled Collections</Link> 
+                <Link to="/admin/vehicles">Manage Vehicles</Link>
+                <Link to="/admin/employees">Manage Employees</Link>
               </div>
             )}
 
@@ -39,7 +42,14 @@ function DashboardPage(){
                 <h3>Organization Portal</h3>
                 <Link to="/new-request">Create a New Waste Request</Link>
                 <br />
-                {/* <Link to="/my-requests">View My Request History</Link> */}
+                <Link to="/my-billing">View My Billing</Link>
+
+              </div>  
+            )}
+            {user.role === 'driver' && (
+              <div>
+                <h3>Driver Portal</h3>
+                <Link to="/driver-dashboard">View My Assigned Jobs</Link>
               </div>
             )}
          </div>
