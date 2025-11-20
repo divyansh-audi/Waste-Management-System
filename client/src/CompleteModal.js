@@ -1,18 +1,4 @@
-// Create new file: client/src/CompleteModal.js
 import React, { useState } from 'react';
-
-// You can re-use the modal styles from your ScheduleModal
-const modalStyle = {
-  position: 'fixed', top: '50%', left: '50%', 
-  transform: 'translate(-50%, -50%)',
-  backgroundColor: 'white', padding: '20px', 
-  boxShadow: '0 4px 8px rgba(0,0,0,0.2)', zIndex: 1000
-};
-const overlayStyle = {
-  position: 'fixed', top: 0, left: 0, 
-  width: '100%', height: '100%', 
-  backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 999
-};
 
 function CompleteModal({ collection, onClose, onSubmit }) {
   const [weight, setWeight] = useState('');
@@ -23,32 +9,36 @@ function CompleteModal({ collection, onClose, onSubmit }) {
       alert('Please enter the actual weight collected.');
       return;
     }
-    onSubmit(weight); // Pass just the weight back
+    onSubmit(weight);
   };
 
   return (
-    <>
-      <div style={overlayStyle} onClick={onClose} />
-      <div style={modalStyle}>
-        <h3>Complete Collection ID: {collection.collection_id}</h3>
-        <p>For: {collection.organisation_name}</p>
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={e => e.stopPropagation()}>
+        <h2>Complete Collection #{collection.collection_id}</h2>
+        <p style={{marginBottom: '1rem', color: '#7f8c8d'}}>
+          <strong>For:</strong> {collection.organisation_name}
+        </p>
         
         <form onSubmit={handleSubmit}>
-          <label>Enter Actual Weight Collected (kg):</label>
+          <label>Actual Weight Collected (kg)</label>
           <input 
+            className="form-control"
             type="number"
-            step="0.01" // for decimals
+            step="0.01"
             value={weight}
             onChange={e => setWeight(e.target.value)}
             placeholder="e.g., 120.5"
             required
           />
           
-          <button type="submit">Confirm Completion</button>
-          <button type="button" onClick={onClose}>Cancel</button>
+          <div className="modal-actions">
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn">Confirm Completion</button>
+          </div>
         </form>
       </div>
-    </>
+    </div>
   );
 }
 

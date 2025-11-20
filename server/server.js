@@ -69,7 +69,8 @@ app.get('/api/admin/scheduled-collections', authenticateToken, isAdmin, async (r
         v.vehicle_type,
         v.reg_no
       FROM collections c
-      JOIN organisation o ON c.org_id = o.id
+      JOIN requests r ON c.request_id = r.request_id  -- 1. Link Collection to Request
+      JOIN organisation o ON r.org_id = o.id          -- 2. Link Request to Org
       JOIN employees e ON c.employee_id = e.employee_id
       JOIN vehicles v ON c.vehicle_reg = v.reg_no
       WHERE c.status = 'Scheduled'
@@ -97,7 +98,8 @@ app.get('/api/driver/my-jobs', authenticateToken, isDriver, async (req, res) => 
         v.vehicle_type,
         v.reg_no
       FROM collections c
-      JOIN organisation o ON c.org_id = o.id
+      JOIN requests r ON c.request_id = r.request_id  -- 1. Link Collection to Request
+      JOIN organisation o ON r.org_id = o.id          -- 2. Link Request to Org
       JOIN vehicles v ON c.vehicle_reg = v.reg_no
       WHERE c.status = 'Scheduled' AND c.employee_id = ?
       ORDER BY c.pickup_datetime ASC
@@ -191,12 +193,11 @@ app.post('/api/admin/schedule', authenticateToken, isAdmin, async (req, res) => 
     );
     const org_id = rows[0].org_id;
     const collection_sql = `
-      INSERT INTO collections (request_id, org_id, pickup_datetime, employee_id, vehicle_reg, status)
-      VALUES (?, ?, ?, ?, ?, 'Scheduled')
+      INSERT INTO collections (request_id, pickup_datetime, employee_id, vehicle_reg, status)
+      VALUES (?, ?, ?, ?, 'Scheduled')
     `;
     await connection.query(collection_sql, [
       request_id,
-      org_id,
       pickup_datetime,
       employee_id,
       vehicle_reg
@@ -244,9 +245,15 @@ app.post('/api/driver/complete-job', authenticateToken, isDriver, async (req, re
 
     // 2. Get request_id
     const [rows] = await connection.query(
-      "SELECT request_id, org_id FROM collections WHERE collection_id = ?", 
+      `SELECT c.request_id, r.org_id 
+       FROM collections c 
+       JOIN requests r ON c.request_id = r.request_id 
+       WHERE c.collection_id = ?`, 
       [collection_id]
     );
+    if (rows.length === 0) {
+      throw new Error("Collection not found.");
+    }
     const { request_id, org_id } = rows[0];
 
     // 3. Update 'requests'
@@ -377,7 +384,10 @@ app.post('/api/admin/complete-collection', authenticateToken, isAdmin, async (re
 
     // 2. Get request_id and org_id
     const [rows] = await connection.query(
-      "SELECT request_id, org_id FROM collections WHERE collection_id = ?", 
+      `SELECT c.request_id, r.org_id 
+       FROM collections c 
+       JOIN requests r ON c.request_id = r.request_id 
+       WHERE c.collection_id = ?`, 
       [collection_id]
     );
     const { request_id, org_id } = rows[0];
@@ -429,15 +439,24 @@ app.post('/api/admin/complete-collection', authenticateToken, isAdmin, async (re
     );
 
     const [rows] = await connection.query(
-      "SELECT request_id FROM collections WHERE collection_id = ?", 
-      [collection_id]
+    `SELECT c.request_id, r.org_id 
+    FROM collections c 
+    JOIN requests r ON c.request_id = r.request_id 
+    WHERE c.collection_id = ?`, 
+    [collection_id]
     );
-    const request_id = rows[0].request_id;
+    const { request_id, org_id } = rows[0];
 
     await connection.query(
       "UPDATE requests SET status = 'Completed' WHERE request_id = ?",
       [request_id]
     );
+    const calculatedAmount = weight_kg * 0.5;
+    const payment_sql = `
+    INSERT INTO payments (org_id, collection_id, amount, payment_date, payment_method, status)
+    VALUES (?, ?, ?, CURDATE(), 'Unpaid', 'Pending')
+    `;
+    await connection.query(payment_sql, [org_id, collection_id, calculatedAmount]);
     await connection.commit();
     res.status(200).json({ message: 'Collection marked as complete!' });
 

@@ -14,34 +14,34 @@ function EmployeeRegisterPage() {
   const handleRegister = (e) => {
     e.preventDefault();
 
-    // Call the new employee endpoint
     axios.post('http://localhost:5000/api/auth/register-admin', {
-      name,
-      email,
-      contact,
-      age,
-      password,
-      adminSecret
+      name, email, contact, age, password, adminSecret
     })
       .then(response => {
-        console.log("Employee Registration Successful:", response.data.message);
+        alert("Employee Registration Successful!");
         navigate('/login');
       })
       .catch(err => {
-        console.error("Registration Failed:", err.response.data.message);
+        console.error("Registration Failed:", err.response?.data);
+        alert(err.response?.data?.message || "Registration Failed");
       });
   };
+
   return (
-    <form onSubmit={handleRegister}>
-      <h2>Employee (Admin) Registration</h2>
-      <input type="text" placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} />
-      <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <input type="text" placeholder="Contact" value={contact} onChange={(e) => setContact(e.target.value)} />
-      <input type="number" placeholder="Age" value={age} onChange={(e) => setAge(e.target.value)} />
-      <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      <input type="password" placeholder="Admin Secret Key" value={adminSecret} onChange={(e) => setAdminSecret(e.target.value)} />
-      <button type="submit">Register Employee</button>
-    </form>
+    <div className="auth-container">
+        <div className="auth-card" style={{maxWidth: '500px'}}>
+            <h2 style={{textAlign: 'center', color: '#2c3e50'}}>Employee Registration</h2>
+            <form onSubmit={handleRegister}>
+                <input className="form-control" type="text" placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} required />
+                <input className="form-control" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <input className="form-control" type="text" placeholder="Contact" value={contact} onChange={(e) => setContact(e.target.value)} />
+                <input className="form-control" type="number" placeholder="Age" value={age} onChange={(e) => setAge(e.target.value)} />
+                <input className="form-control" type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                <input className="form-control" type="password" placeholder="Admin Secret Key" value={adminSecret} onChange={(e) => setAdminSecret(e.target.value)} required />
+                <button className="btn btn-block" type="submit">Register Employee</button>
+            </form>
+        </div>
+    </div>
   );
 }
 

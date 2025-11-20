@@ -1,4 +1,3 @@
-// In client/src/MyBillingPage.js
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from './AuthContext';
@@ -8,7 +7,6 @@ function MyBillingPage() {
   const [loading, setLoading] = useState(true);
   const { authToken } = useAuth();
 
-  // Fetch payments
   const fetchPayments = useCallback(async () => {
     try {
       const config = { headers: { 'Authorization': `Bearer ${authToken}` } };
@@ -20,56 +18,64 @@ function MyBillingPage() {
     setLoading(false);
   }, [authToken]);
 
-  useEffect(() => {
-    fetchPayments();
-  }, [fetchPayments]);
+  useEffect(() => { fetchPayments(); }, [fetchPayments]);
 
-  // Handle "Pay" button click
   const handlePay = async (payment_id) => {
     try {
       const config = { headers: { 'Authorization': `Bearer ${authToken}` } };
       await axios.post(`http://localhost:5000/api/pay-bill/${payment_id}`, {}, config);
       alert('Payment successful!');
-      fetchPayments(); // Refresh the list
+      fetchPayments();
     } catch (error) {
       console.error("Payment failed:", error);
       alert('Payment failed.');
     }
   };
 
-  if (loading) return <div>Loading payments...</div>;
+  if (loading) return <div className="page-container">Loading...</div>;
 
   return (
-    <div>
-      <h2>My Billing History</h2>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ background: '#eee' }}>
-            <th>Payment ID</th>
-            <th>Date</th>
-            <th>Amount</th>
-            <th>Status</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {payments.map(pay => (
-            <tr key={pay.payment_id}>
-              <td>{pay.payment_id}</td>
-              <td>{new Date(pay.payment_date).toLocaleDateString()}</td>
-              <td>${pay.amount}</td>
-              <td>{pay.status}</td>
-              <td>
-                {pay.status === 'Pending' ? (
-                  <button onClick={() => handlePay(pay.payment_id)}>Pay Now</button>
-                ) : (
-                  'Paid'
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="page-container">
+      <div className="card">
+        <h2>My Billing History</h2>
+        <div className="table-container">
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Date</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.map(pay => (
+                <tr key={pay.payment_id}>
+                  <td>{pay.payment_id}</td>
+                  <td>{new Date(pay.payment_date).toLocaleDateString()}</td>
+                  <td>${pay.amount}</td>
+                  <td>
+                    <span style={{
+                      padding: '4px 8px', 
+                      borderRadius: '4px', 
+                      background: pay.status === 'Paid' ? '#d4edda' : '#fff3cd',
+                      color: pay.status === 'Paid' ? '#155724' : '#856404'
+                    }}>
+                      {pay.status}
+                    </span>
+                  </td>
+                  <td>
+                    {pay.status === 'Pending' ? (
+                      <button className="btn btn-sm" onClick={() => handlePay(pay.payment_id)}>Pay Now</button>
+                    ) : 'Paid'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
